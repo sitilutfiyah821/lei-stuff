@@ -540,7 +540,7 @@ async function syncAction() {
   const a = SYNC.action;
   try {
     if (a === 'connect' || a === 'relogin') { await STORE.connect(); }
-    else if (a === 'folder') { await STORE.pickFolder(); }
+    else if (a === 'folder') { if (STORE.chooseFolder) await STORE.chooseFolder(); else await STORE.pickFolder(); }
     else if (a === 'allow' && STORE.kind === 'mcp') { STORE.ready = true; }
   } catch (e) { handleDriveErr(e, 'load'); return; }
   if (!STORE.ready) return;
@@ -1315,19 +1315,47 @@ function makeGoogleStore() {
     async connect() {
       await getToken(META.gConnected ? '' : 'consent');
       META.gConnected = true; saveLocal();
-      if (!META.folderOk) await this.pickFolder();
+      if (!META.folderOk) await this.chooseFolder();
       this.ready = true;
+    },
+    /* Pengguna baru: buat folder "Lei Stuff" otomatis. Pengguna lama: pilih folder berisi data sebelumnya. */
+    async chooseFolder() {
+      const v = await new Promise(res => {
+        openDialog(`<h2>Simpan tulisanmu di mana?</h2>
+          <p class="meta">Lei Stuff menyimpan salinan tulisanmu di Google Drive milikmu sendiri. Hanya kamu yang bisa membukanya.</p>
+          <div class="col" style="gap:8px;margin-top:12px">
+            <button class="btn" data-act="dlgPick" data-v="new">Buat folder baru “Lei Stuff” di Drive-ku</button>
+            <button class="btn quiet" data-act="dlgPick" data-v="old">Aku sudah punya folder Lei Stuff (pilih folder lama)</button>
+          </div>`);
+        dlgResolve = res;
+      });
+      if (v === 'new') return this.ensureAppFolder();
+      if (v === 'old') return this.pickFolder();
+      throw { code: 'no_folder' };
+    },
+    async ensureAppFolder() {
+      if (!token) await getToken('');
+      const q = encodeURIComponent("mimeType = 'application/vnd.google-apps.folder' and name = 'Lei Stuff' and trashed = false");
+      const j = await api('GET', `https://www.googleapis.com/drive/v3/files?q=${q}&pageSize=1&fields=files(id,name)&spaces=drive`);
+      let id = j.files && j.files[0] && j.files[0].id;
+      if (!id) {
+        const r = await api('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', JSON.stringify({ name: 'Lei Stuff', mimeType: 'application/vnd.google-apps.folder' }), { 'Content-Type': 'application/json' });
+        id = r.id;
+      }
+      META.folderId = id; META.folderOk = true; saveLocal();
+      this.ready = true;
+      toast('Folder “Lei Stuff” siap di Google Drive-mu');
     },
     async pickFolder() {
       if (!token) await getToken('');
       await loadPicker();
       const fv = new google.picker.DocsView(google.picker.ViewId.FOLDERS).setIncludeFolders(true).setSelectFolderEnabled(true).setMode(google.picker.DocsViewMode.LIST);
-      const f = await picker(fv, 'Pilih folder “Lei\'s Writing Stuff”');
+      const f = await picker(fv, 'Pilih folder Lei Stuff-mu yang lama');
       if (!f || !f[0]) throw { code: 'no_folder' };
       META.folderId = f[0].id; META.folderOk = true; saveLocal();
       // Beri izin baca untuk file data lama (mis. dari versi artifact) di folder itu.
       const dv = new google.picker.DocsView(google.picker.ViewId.DOCS).setParent(META.folderId).setMode(google.picker.DocsViewMode.LIST).setQuery(FILE_PREFIX);
-      await picker(dv, 'Pilih file data Lei Stuff terbaru (lewati jika belum ada)');
+      await picker(dv, 'Pilih file lei-stuff-data terbaru di folder itu (lewati jika tidak ada)');
       this.ready = true;
     },
     async list() {
@@ -1418,7 +1446,7 @@ window.addEventListener('hashchange', () => { const h = location.hash.slice(1); 
 const touch = p => { p.updatedAt = Date.now(); markDirty(); };
 const A = {
   go: t => go(t.dataset.v),
-  dlgYes: () => closeDialog(true), dlgNo: () => closeDialog(false), dlgClose: () => closeDialog(false),
+  dlgYes: () => closeDialog(true), dlgPick: t => closeDialog(t.dataset.v), dlgNo: () => closeDialog(false), dlgClose: () => closeDialog(false),
   newPiece: () => newPieceDialog(),
   npType: t => { U.npType = t.dataset.k; $$('[data-act="npType"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.k === U.npType)); },
   npCreate: () => {
