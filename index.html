@@ -319,6 +319,7 @@ function normalize(d) {
   s.settings.pomo = Object.assign({ durs: [25, 5, 15], cycle: 4 }, s.settings.pomo || {});
   ['pieces', 'contests', 'pubs', 'todos', 'notes', 'ideas', 'sessions'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
   s.dayWords = s.dayWords || {}; s.dayTime = s.dayTime || {};
+  if (!Array.isArray(s.ofaHidden)) s.ofaHidden = [];
   s.pieces.forEach(p => {
     p.prep = p.prep || {}; p.steps = p.steps || {}; p.checks = p.checks || {}; p.fns = p.fns || {}; p.chars = p.chars || []; p.rubric = p.rubric || {};
     if (!TYPE_NAME[p.type]) p.type = 'lain';
@@ -468,7 +469,7 @@ async function cleanupVersions(keepId) {
 }
 
 function markDirty() {
-  S.updatedAt = Date.now(); META.dirty = true; saveLocal();
+  S.updatedAt = Date.now(); META.dirty = true; saveLocal(); ofaPublish();
   if (STORE && STORE.ready) {
     if (!SYNC.firstDirty) SYNC.firstDirty = Date.now();
     if (SYNC.status !== 'busy' && SYNC.status !== 'err') setSync('dirty');
@@ -714,6 +715,7 @@ function viewLomba() {
   const best = Object.entries(g).sort((a, b) => b[1] - a[1])[0];
   const gaps = S.contests.filter(c => c.sentAt && c.deadline).map(c => (parseD(c.deadline) - parseD(c.sentAt)) / 864e5);
   return `<header class="between" style="align-items:flex-end"><h1>Lomba</h1><button class="btn" data-act="contestDialog">Tambah lomba</button></header>
+  ${ofaInboxHTML()}
   <section class="grid" aria-label="Rapor lomba">
    <div class="card stat"><span class="meta">Lomba diikuti</span><b>${joined.length}</b><span class="meta">terkirim, menang, atau tidak lolos</span></div>
    <div class="card stat"><span class="meta">Lolos atau menang</span><b style="color:var(--gd)">${won.length} ${decided.length ? `<small>· ${Math.round(won.length / decided.length * 100)}%</small>` : ''}</b><span class="meta">dari ${decided.length} yang sudah diumumkan</span></div>
@@ -748,6 +750,8 @@ function contestDetail(d) {
   return `<aside class="card col" style="flex:1 1 320px;min-width:0" aria-label="Detail lomba">
    <div class="meta">${esc(d.genre || 'Semua genre')} · tenggat ${fmtDate(d.deadline)}${['Mengincar', 'Disiapkan'].includes(d.status) && d.deadline ? ' · ' + cdText(daysTo(d.deadline)) : ''}</div>
    <h2>${esc(d.name)}</h2>
+   ${d.regDate || d.announce ? `<div class="meta">${d.regDate ? 'Daftar ' + fmtDate(d.regDate) : ''}${d.regDate && d.announce ? ' · ' : ''}${d.announce ? 'Pengumuman ' + fmtDate(d.announce) : ''}</div>` : ''}
+   ${OFA_ON() ? `<div class="meta">Tersambung ke Ofa: jadwalnya ikut berubah saat lomba ini diubah. <a href="${OFA_URL}" target="_blank" rel="noopener">Buka Ofa</a></div>` : ''}
    <label class="f">Status<select class="in" data-ch="contestStatus" data-id="${d.id}">${CSTAT.map(s => `<option ${s === d.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
    ${d.notes ? `<div style="white-space:pre-wrap;font-size:14px;line-height:1.6;color:var(--ink2)">${esc(d.notes)}</div>` : ''}
    ${d.link ? `<a href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener" style="font-size:14px">Buka halaman ketentuan</a>` : ''}
@@ -772,11 +776,14 @@ function newPieceDialog(pre = {}) {
    <div class="row" style="justify-content:flex-end"><button class="btn quiet" data-act="dlgClose">Batal</button><button class="btn" data-act="npCreate">Buat dan mulai persiapan</button></div>`);
   U.npType = type;
 }
-function contestDialog(id) {
-  const c = id ? contestById(id) : { name: '', deadline: '', status: 'Mengincar', genre: '', link: '', notes: '' };
+function contestDialog(id, pre) {
+  const c = id ? contestById(id) : Object.assign({ name: '', deadline: '', regDate: '', announce: '', status: 'Mengincar', genre: '', link: '', notes: '' }, pre || {});
+  U.ofaPre = !id && pre && pre.dariOfa ? pre.dariOfa : null;
   openDialog(`<h2>${id ? 'Sunting lomba' : 'Lomba baru'}</h2>
    <label class="f">Nama lomba<input class="in" id="cName" value="${esc(c.name)}"></label><div class="err" id="cErr" hidden>Isi nama lomba dulu.</div>
-   <div class="row" style="flex-wrap:nowrap"><label class="f" style="flex:1">Tenggat<input class="in" type="date" id="cDl" value="${esc(c.deadline)}"></label><label class="f" style="flex:1">Status<select class="in" id="cSt">${CSTAT.map(s => `<option ${s === c.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label></div>
+   <div class="row" style="flex-wrap:nowrap"><label class="f" style="flex:1">Tenggat kirim karya<input class="in" type="date" id="cDl" value="${esc(c.deadline)}"></label><label class="f" style="flex:1">Status<select class="in" id="cSt">${CSTAT.map(s => `<option ${s === c.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label></div>
+   <div class="row" style="flex-wrap:nowrap"><label class="f" style="flex:1">Batas pendaftaran <span class="meta">(opsional)</span><input class="in" type="date" id="cReg" value="${esc(c.regDate || '')}"></label><label class="f" style="flex:1">Pengumuman <span class="meta">(opsional)</span><input class="in" type="date" id="cAnn" value="${esc(c.announce || '')}"></label></div>
+   ${OFA_ON() ? '<span class="meta">Tanggal-tanggal ini otomatis masuk ke Ofa sebagai pengingat.</span>' : ''}
    <div class="row" style="flex-wrap:nowrap"><label class="f" style="flex:1">Genre atau tema<input class="in" id="cGenre" value="${esc(c.genre)}" placeholder="Cerpen, tema lingkungan"></label><label class="f" style="flex:1">Tautan ketentuan<input class="in" type="url" id="cLink" value="${esc(c.link)}" placeholder="https://"></label></div>
    <label class="f">Catatan (syarat, hadiah, jumlah kata)<textarea class="in" id="cNotes" rows="3">${esc(c.notes)}</textarea></label>
    <div class="row" style="justify-content:flex-end"><button class="btn quiet" data-act="dlgClose">Batal</button><button class="btn" data-act="saveContest" data-id="${id || ''}">Simpan lomba</button></div>`);
@@ -1267,6 +1274,83 @@ async function exportWord(p) {
   catch (e) { if (!e || e.code !== 'declined') toast('Berkas belum tersimpan' + (e && e.message ? ': ' + e.message : '.')); }
 }
 
+/* ============ Jembatan dengan One for All (Ofa) ============
+   Lei Stuff dan Ofa sama-sama tinggal di sitilutfiyah821.github.io, jadi berbagi penyimpanan di perangkat yang sama.
+   - Lei Stuff menulis jadwal lombanya ke 'leistuff-ke-ofa-v1' (hanya kunci ini yang ditulis Lei Stuff).
+     Tiap lomba menjadi sampai tiga jadwal: batas pendaftaran, batas kirim karya, dan pengumuman.
+   - Lei Stuff membaca data Ofa ('ofa-data-v1') untuk kotak "Dari Ofa": jadwal lomba yang dicatat di Ofa
+     (misalnya dari poster Instagram) dan belum ada di Lei Stuff. Saat dijadikan lomba, id jadwal Ofa dikirim
+     balik sebagai 'gantikan', supaya Ofa tidak menggandakan jadwalnya. */
+const OFA_OUT = 'leistuff-ke-ofa-v1';
+const OFA_IN = 'ofa-data-v1';
+const OFA_URL = 'https://sitilutfiyah821.github.io/one-for-all/';
+const LEI_URL = 'https://sitilutfiyah821.github.io/lei-stuff/';
+const OFA_PARTS = [['daftar', 'regDate', 'Daftar'], ['kirim', 'deadline', 'Kirim karya'], ['umum', 'announce', 'Pengumuman']];
+const OFA_ON = () => TARGET === 'web';
+
+function ofaJadwal() {
+  const out = [];
+  S.contests.forEach(c => {
+    const sent = ['Terkirim', 'Menang', 'Tidak lolos'].includes(c.status);
+    const decided = ['Menang', 'Tidak lolos'].includes(c.status);
+    const note = [c.genre ? 'Genre/tema: ' + c.genre : '', c.link ? 'Ketentuan: ' + c.link : '', (c.notes || '').slice(0, 300)].filter(Boolean).join('\n');
+    OFA_PARTS.forEach(([k, f, label]) => {
+      if (!c[f]) return;
+      const it = { id: c.id + '-' + k, judul: label + ': ' + c.name, tanggal: c[f], catatan: note, link: LEI_URL + '#lomba/' + c.id, selesai: k === 'umum' ? decided : sent };
+      if (c.dariOfa && c.dariOfa[k]) it.gantikan = c.dariOfa[k];
+      it.versi = [it.judul, it.tanggal, it.catatan, it.selesai ? 1 : 0].join('|');
+      out.push(it);
+    });
+  });
+  return out;
+}
+let ofaLast = '';
+function ofaPublish() {
+  if (!OFA_ON()) return;
+  const jadwal = ofaJadwal(); const body = JSON.stringify(jadwal);
+  if (body === ofaLast) return;
+  ofaLast = body;
+  try { localStorage.setItem(OFA_OUT, JSON.stringify({ v: 1, waktu: new Date().toISOString(), jadwal })); } catch (e) { }
+}
+
+/* Jadwal lomba di Ofa yang belum ada di Lei Stuff, dikelompokkan per nama lomba. */
+function ofaInbox() {
+  if (!OFA_ON()) return [];
+  let d = null; try { d = JSON.parse(localStorage.getItem(OFA_IN) || 'null'); } catch (e) { return []; }
+  if (!d || !Array.isArray(d.tasks) || !Array.isArray(d.projects)) return [];
+  const lomba = new Set(d.projects.filter(p => p.kind === 'lomba' || p.id === 'lei-stuff').map(p => p.id));
+  const used = new Set(S.ofaHidden || []);
+  S.contests.forEach(c => Object.values(c.dariOfa || {}).forEach(id => used.add(id)));
+  const groups = new Map();
+  d.tasks.forEach(t => {
+    if (!lomba.has(t.projectId) || t.dariLei || t.dariNiras || t.done || t.skipped || used.has(t.id) || !t.date) return;
+    if (daysTo(t.date) < -1) return;
+    const m = /^(Daftar|Kirim karya|Pengumuman):\s*(.+)$/i.exec(t.title || '');
+    const kind = m ? { daftar: 'daftar', 'kirim karya': 'kirim', pengumuman: 'umum' }[m[1].toLowerCase()] : 'kirim';
+    const name = (m ? m[2] : t.title || '').trim(); if (!name) return;
+    const key = name.toLowerCase() + '|' + (t.link || '');
+    const g = groups.get(key) || { name, link: t.link || '', note: t.note || '', ids: {}, dates: {} };
+    if (!g.ids[kind]) { g.ids[kind] = t.id; g.dates[kind] = t.date; }
+    groups.set(key, g);
+  });
+  return Array.from(groups.values()).sort((a, b) => (a.dates.kirim || a.dates.daftar || a.dates.umum || '').localeCompare(b.dates.kirim || b.dates.daftar || b.dates.umum || ''));
+}
+
+function ofaInboxHTML() {
+  const list = ofaInbox(); if (!list.length) return '';
+  U.ofaList = list;
+  return `<section class="card col" style="gap:10px" aria-label="Jadwal lomba dari Ofa">
+   <div class="between"><h3>Dari Ofa</h3><a class="meta" href="${OFA_URL}" target="_blank" rel="noopener">Buka Ofa</a></div>
+   <span class="meta">Jadwal lomba yang kamu catat di Ofa dan belum ada di sini.</span>
+   ${list.map((g, i) => `<div class="item" style="background:var(--s2);cursor:default"><span class="grow"><span class="t" style="display:block">${esc(g.name)}</span><span class="meta">${[['daftar', 'Daftar'], ['kirim', 'Kirim'], ['umum', 'Pengumuman']].filter(([k]) => g.dates[k]).map(([k, l]) => l + ' ' + fmtDate(g.dates[k])).join(' · ')}</span></span><span class="row" style="gap:6px"><button class="btn sm" data-act="ofaAdopt" data-i="${i}">Jadikan lomba</button><button class="btn sm quiet" data-act="ofaHide" data-i="${i}">Abaikan</button></span></div>`).join('')}
+  </section>`;
+}
+
+if (typeof window !== 'undefined') window.addEventListener('storage', e => {
+  if (e.key !== OFA_IN || !OFA_ON() || U.view !== 'lomba' || document.querySelector('.modal')) return;
+  render();
+});
+
 /* ============ Adapter: Google Drive + Calendar langsung (versi website) ============
    Memakai Google Identity Services (token di browser, tanpa server) dan Google Picker.
    Konfigurasi di window.LEI_CONFIG = { clientId, apiKey, projectNumber } (src/config.js). */
@@ -1460,7 +1544,7 @@ function openPiece(id) {
   try { history.replaceState(null, '', '#ruang-tulis'); } catch (e) { }
   render(); window.scrollTo(0, 0);
 }
-window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== U.view) go(h, false); });
+window.addEventListener('hashchange', () => { let h = location.hash.slice(1); const m = /^lomba\/(.+)$/.exec(h); if (m) { U.lomba.sel = m[1]; h = 'lomba'; if (U.view === 'lomba') { render(); return; } } if (h && h !== U.view) go(h, false); });
 
 /* ============ Aksi klik ============ */
 const touch = p => { p.updatedAt = Date.now(); markDirty(); };
@@ -1516,14 +1600,19 @@ const A = {
   lombaFilter: t => { U.lomba.filter = t.dataset.s; U.lomba.sel = null; render(); },
   selContest: t => { U.lomba.sel = t.dataset.id; if (U.view !== 'lomba') go('lomba'); else render(); },
   contestDialog: t => contestDialog(t.dataset.id),
+  ofaAdopt: t => { const g = (U.ofaList || [])[+t.dataset.i]; if (!g) return; contestDialog('', { name: g.name, deadline: g.dates.kirim || '', regDate: g.dates.daftar || '', announce: g.dates.umum || '', link: /lei-stuff/.test(g.link) ? '' : g.link, notes: g.note, dariOfa: g.ids }); },
+  ofaHide: t => { const g = (U.ofaList || [])[+t.dataset.i]; if (!g) return; S.ofaHidden = (S.ofaHidden || []).concat(Object.values(g.ids)).slice(-300); markDirty(); render(); toast('Disembunyikan dari kotak Dari Ofa'); },
   saveContest: t => {
     const name = $('#cName').value.trim(); if (!name) { $('#cErr').hidden = false; $('#cName').focus(); return; }
-    const data = { name, deadline: $('#cDl').value, genre: $('#cGenre').value.trim(), link: $('#cLink').value.trim(), notes: $('#cNotes').value };
+    const data = { name, deadline: $('#cDl').value, regDate: $('#cReg').value, announce: $('#cAnn').value, genre: $('#cGenre').value.trim(), link: $('#cLink').value.trim(), notes: $('#cNotes').value };
+    if (!t.dataset.id && U.ofaPre) data.dariOfa = U.ofaPre;
     const st = $('#cSt').value;
     let c;
     if (t.dataset.id) { c = contestById(t.dataset.id); Object.assign(c, data); } else { c = Object.assign({ id: uid(), status: 'Mengincar', at: Date.now() }, data); S.contests.push(c); }
     setContestStatus(c, st);
+    U.ofaPre = null;
     U.lomba.sel = c.id; markDirty(); closeDialog(); render();
+    if (c.dariOfa && OFA_ON()) toast('Lomba ditambahkan. Jadwalnya di Ofa kini mengikuti Lei Stuff.');
     if (c.cal && c.cal.on) calSync(c);
   },
   delContest: async t => { if (await ask('Hapus lomba ini? Tulisan yang terhubung tetap ada.', 'Hapus', true)) { const dc = contestById(t.dataset.id); if (dc && dc.cal && dc.cal.eventId && STORE && STORE.hasCalendar) STORE.calDelete(dc).catch(e => toast(calErr(e))); S.contests = S.contests.filter(x => x.id !== t.dataset.id); S.pieces.forEach(p => { if (p.contestId === t.dataset.id) p.contestId = ''; }); U.lomba.sel = null; markDirty(); render(); } },
@@ -1714,7 +1803,9 @@ document.addEventListener('pointerdown', e => {
   const local = await loadLocal();
   if (local) { S = normalize(local.S); Object.assign(META, local.META || {}); }
   P.left = pomoDurs()[0] * 60;
-  const h = location.hash.slice(1); if (VIEWS.some(x => x[0] === h)) U.view = h;
+  let h = location.hash.slice(1); const hm = /^lomba\/(.+)$/.exec(h); if (hm) { h = 'lomba'; U.lomba.sel = hm[1]; }
+  if (VIEWS.some(x => x[0] === h)) U.view = h;
+  ofaPublish();
   render();
   initSync();
 })();
