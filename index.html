@@ -320,6 +320,7 @@ function normalize(d) {
   ['pieces', 'contests', 'pubs', 'todos', 'notes', 'ideas', 'sessions'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
   s.dayWords = s.dayWords || {}; s.dayTime = s.dayTime || {};
   if (!Array.isArray(s.ofaHidden)) s.ofaHidden = [];
+  if (!Array.isArray(s.ideaDilan)) s.ideaDilan = [];   // id titipan ide dari Dilan yang sudah diambil (lihat ofa.js)
   s.pieces.forEach(p => {
     p.prep = p.prep || {}; p.steps = p.steps || {}; p.checks = p.checks || {}; p.fns = p.fns || {}; p.chars = p.chars || []; p.rubric = p.rubric || {};
     if (!TYPE_NAME[p.type]) p.type = 'lain';
@@ -1351,6 +1352,50 @@ if (typeof window !== 'undefined') window.addEventListener('storage', e => {
   render();
 });
 
+/* ============ Kotak masuk ide dari Dilan ============
+   Dilan (pulau di layar laptop) meneruskan ketikan "i: …" ke tab One for All, yang menitipkannya di kunci
+   'dilan-ke-leistuff-v1' (satu origin, jadi penyimpanannya sama). Lei Stuff memindahkannya ke Bank ide saat aman:
+   tidak sedang membaca/menyimpan Drive dan tidak ada dialog konflik. Id titipan yang sudah diambil dicatat di
+   S.ideaDilan, jadi ide yang sudah dihapus tidak masuk lagi, dan ide yang hilang karena versi Drive lebih baru
+   masuk lagi pada kesempatan berikutnya. */
+const DILAN_IN = 'dilan-ke-leistuff-v1';
+const IDE_JENIS = { novel: 'novel', cerpen: 'cerpen', puisi: 'puisi', fiksi: 'fiksi', fiksimini: 'fiksi', review: 'review', resensi: 'review', esai: 'esai', essay: 'esai' };
+/** Kata pertama yang menyebut jenis tulisan ("cerpen tentang …", "puisi: …") menentukan kategori ide. */
+function dilanJenis(text) {
+  const m = /^\s*(fiksi mini|[a-z]+)\b/i.exec(text || '');
+  return (m && IDE_JENIS[m[1].toLowerCase().replace(/\s+/g, '')]) || 'lain';
+}
+let dilanT = null;
+function dilanAmbilIde() {
+  if (!OFA_ON()) return;
+  let box = null; try { box = JSON.parse(localStorage.getItem(DILAN_IN) || 'null'); } catch (e) { return; }
+  if (!box || !Array.isArray(box.ide) || !box.ide.length) return;
+  if (pendingRemote || ['init', 'busy'].includes(SYNC.status)) { clearTimeout(dilanT); dilanT = setTimeout(dilanAmbilIde, 5000); return; }
+  const sudah = new Set(S.ideaDilan);
+  const baru = box.ide.filter(i => i && i.id && String(i.text || '').trim() && !sudah.has(i.id));
+  if (baru.length) {
+    baru.forEach(i => {
+      const text = String(i.text).trim().slice(0, 2000);
+      S.ideas.push({ id: uid(), text, type: dilanJenis(text), at: Number(i.at) || Date.now() });
+      S.ideaDilan.push(i.id);
+    });
+    S.ideaDilan = S.ideaDilan.slice(-300);
+    markDirty();
+    const a = document.activeElement;
+    const mengetik = a && (/INPUT|TEXTAREA/.test(a.tagName) || a.isContentEditable);
+    if (!mengetik && U.view !== 'ruang-tulis' && !document.querySelector('.modal')) render();
+    toast(baru.length === 1 ? 'Ide dari Dilan masuk ke Bank ide' : baru.length + ' ide dari Dilan masuk ke Bank ide');
+  }
+  // Rapikan titipan: yang sudah diambil dan berumur lebih dari 2 hari dibuang.
+  const batas = Date.now() - 2 * 86400000, tercatat = new Set(S.ideaDilan);
+  const sisa = box.ide.filter(i => !(i && tercatat.has(i.id) && (Number(i.at) || 0) < batas));
+  if (sisa.length !== box.ide.length) { try { localStorage.setItem(DILAN_IN, JSON.stringify({ v: 1, ide: sisa })); } catch (e) { } }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', e => { if (e.key === DILAN_IN) dilanAmbilIde(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') dilanAmbilIde(); });
+}
+
 /* ============ Adapter: Google Drive + Calendar langsung (versi website) ============
    Memakai Google Identity Services (token di browser, tanpa server) dan Google Picker.
    Konfigurasi di window.LEI_CONFIG = { clientId, apiKey, projectNumber } (src/config.js). */
@@ -1807,7 +1852,7 @@ document.addEventListener('pointerdown', e => {
   if (VIEWS.some(x => x[0] === h)) U.view = h;
   ofaPublish();
   render();
-  initSync();
+  initSync().finally(dilanAmbilIde);   // ide titipan dari Dilan diambil setelah data Drive selesai dimuat
 })();
 
 </script>
