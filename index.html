@@ -450,7 +450,7 @@ function syncHTML() {
   const cls = { ok: 'ok', dirty: 'dirty', busy: 'busy', init: 'busy', offline: 'err', err: 'err' }[SYNC.status] || 'busy';
   const can = STORE && STORE.ready && SYNC.status !== 'busy';
   return `<div id="sync" class="col" style="gap:6px"><div class="sync ${cls}" role="status"><span class="dot"></span><span>${esc(SYNC.msg)}</span></div>
-  <div class="row" style="gap:6px">${SYNC.action ? `<button class="btn sm" data-act="syncAction">${SYNC_ACTIONS[SYNC.action]}</button>` : ''}${can && !SYNC.action ? '<button class="btn sm quiet" data-act="saveNow">Simpan sekarang</button>' : ''}</div>${installHTML()}</div>`;
+  <div class="row" style="gap:6px">${SYNC.action ? `<button class="btn sm" data-act="syncAction">${SYNC_ACTIONS[SYNC.action]}</button>` : ''}${can && !SYNC.action ? '<button class="btn sm quiet" data-act="saveNow">Simpan sekarang</button>' : ''}${can && STORE.chooseFolder ? '<button class="btn sm quiet" data-act="changeFolder">Ganti folder</button>' : ''}</div>${installHTML()}</div>`;
 }
 function installHTML() { return (typeof deferredInstall !== 'undefined' && deferredInstall) ? '<button class="btn sm ghost" data-act="installApp">Pasang Lei Stuff di perangkat ini</button>' : ''; }
 
@@ -1464,21 +1464,35 @@ function makeGoogleStore() {
     async connect() {
       await getToken(META.gConnected ? '' : 'consent');
       META.gConnected = true; saveLocal();
-      if (!META.folderOk) await this.chooseFolder();
+      if (!META.folderOk) {
+        // Sudah pernah menyimpan dari perangkat lain? Pakai folder itu langsung, tanpa bertanya.
+        const f = await this.findDataFolder();
+        if (f) { META.folderId = f; META.folderOk = true; saveLocal(); toast('Tulisanmu di Google Drive ditemukan'); }
+        else await this.chooseFolder();
+      }
       this.ready = true;
     },
+    /* Folder berisi file data Lei Stuff terbaru yang bisa dibuka aplikasi ini (dari perangkat mana pun). */
+    async findDataFolder() {
+      const q = encodeURIComponent(`name contains '${FILE_PREFIX}' and mimeType = 'application/json' and trashed = false`);
+      const j = await api('GET', `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime%20desc&pageSize=5&fields=files(id,parents,modifiedTime)&spaces=drive`);
+      const f = (j.files || []).find(x => x.parents && x.parents[0]);
+      return f ? f.parents[0] : null;
+    },
     /* Pengguna baru: buat folder "Lei Stuff" otomatis. Pengguna lama: pilih folder berisi data sebelumnya. */
-    async chooseFolder() {
+    async chooseFolder(change) {
       const v = await new Promise(res => {
         openDialog(`<h2>Simpan tulisanmu di mana?</h2>
           <p class="meta">Lei Stuff menyimpan salinan tulisanmu di Google Drive milikmu sendiri. Hanya kamu yang bisa membukanya.</p>
           <div class="col" style="gap:8px;margin-top:12px">
             <button class="btn" data-act="dlgPick" data-v="new">Buat folder baru “Lei Stuff” di Drive-ku</button>
             <button class="btn quiet" data-act="dlgPick" data-v="old">Aku sudah punya folder Lei Stuff (pilih folder lama)</button>
+            ${change ? '<button class="btn quiet" data-act="dlgPick" data-v="cancel">Batal</button>' : ''}
           </div>`);
         dlgResolve = res;
       });
       if (v === 'new') return this.ensureAppFolder();
+      if (v === 'cancel' && change) return false;
       if (v === 'old') return this.pickFolder();
       throw { code: 'no_folder' };
     },
@@ -1508,10 +1522,19 @@ function makeGoogleStore() {
       this.ready = true;
     },
     async list() {
-      const q = encodeURIComponent(`'${folder()}' in parents and name contains '${FILE_PREFIX}' and trashed = false`);
-      try {
+      const inFolder = async () => {
+        const q = encodeURIComponent(`'${folder()}' in parents and name contains '${FILE_PREFIX}' and trashed = false`);
         const j = await api('GET', `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime%20desc&pageSize=30&fields=files(id,name,modifiedTime)&spaces=drive`);
         return (j.files || []).map(f => ({ id: f.id, title: f.name, modifiedTime: f.modifiedTime }));
+      };
+      try {
+        let files = await inFolder();
+        if (!files.length) {
+          // Folder ini kosong, padahal tulisan mungkin tersimpan di folder lain (mis. dari perangkat lain): pindah ke sana.
+          const f = await this.findDataFolder();
+          if (f && f !== META.folderId) { META.folderId = f; META.folderOk = true; saveLocal(); files = await inFolder(); if (files.length) toast('Tulisanmu ditemukan di folder Drive lain. Lei Stuff kini memakai folder itu.'); }
+        }
+        return files;
       } catch (e) { if (e.code === 'not_found') { META.folderOk = false; throw { code: 'no_folder' }; } throw e; }
     },
     async download(id) { return api('GET', `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`, null, {}, true); },
@@ -1596,6 +1619,10 @@ const touch = p => { p.updatedAt = Date.now(); markDirty(); };
 const A = {
   go: t => go(t.dataset.v),
   toggleTheme: () => { setTheme(THEME === 'light' ? 'dark' : 'light'); render(); toast(THEME === 'light' ? 'Tampilan terang' : 'Tampilan gelap'); },
+  changeFolder: async () => {
+    try { const r = await STORE.chooseFolder(true); if (r === false) return; META.fileId = null; saveLocal(); await loadFromDrive(); }
+    catch (e) { handleDriveErr(e, 'load'); }
+  },
   dlgYes: () => closeDialog(true), dlgPick: t => closeDialog(t.dataset.v), dlgNo: () => closeDialog(false), dlgClose: () => closeDialog(false),
   newPiece: () => newPieceDialog(),
   npType: t => { U.npType = t.dataset.k; $$('[data-act="npType"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.k === U.npType)); },
