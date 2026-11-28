@@ -111,9 +111,9 @@ button.item{width:100%;border:0;text-align:left;cursor:pointer}
 .paper{background:var(--s1);border:1px solid var(--ln);border-radius:14px;padding:34px 44px;min-height:62vh}
 @media(max-width:620px){.paper{padding:22px 18px}}
 .scene-h{font-family:Lora,Georgia,serif;font-size:24px;border:0;background:none;color:var(--ink);width:100%;padding:0;margin:4px 0 14px}
-.ed{outline:none;font-family:Lora,Georgia,serif;font-size:18px;line-height:1.9;color:var(--edt);min-height:40vh;white-space:pre-wrap;overflow-wrap:anywhere}
+.ed{outline:none;font-family:Lora,Georgia,serif;font-size:var(--edfs,18px);line-height:1.9;color:var(--edt);min-height:40vh;white-space:pre-wrap;overflow-wrap:anywhere}
 .ed p,.ed div{margin:0 0 14px}
-.ed h2{font-size:22px;margin:18px 0 10px}.ed h3{font-size:19px;margin:16px 0 8px}
+.ed h2{font-size:1.22em;margin:18px 0 10px}.ed h3{font-size:1.06em;margin:16px 0 8px}.ed u{text-underline-offset:3px}
 .ed blockquote{margin:0 0 14px;padding-left:16px;border-left:3px solid var(--acb);color:var(--ink2);font-style:italic}
 .ed hr{border:0;text-align:center;margin:18px 0;height:20px}.ed hr::after{content:"* * *";color:var(--mu);letter-spacing:.3em}
 .ed:empty::before{content:attr(data-ph);color:var(--dim);font-style:italic}
@@ -384,6 +384,19 @@ function ask(msg, okLabel = 'Ya', danger = false) {
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#modal')) closeDialog(false); });
 
 /* ============ Tampilan terang / gelap (disimpan per perangkat) ============ */
+/* Ukuran huruf naskah di Ruang tulis (hanya tampilan, disimpan per perangkat; tidak mengubah ekspor). */
+const ED_SIZES = [14, 15, 16, 17, 18, 20, 22, 24, 26, 28, 32];
+let ED_SIZE = 18;
+try { ED_SIZE = +localStorage.getItem('lei-stuff-edsize') || 18; } catch (e) { }
+function applyEdSize(n) {
+  ED_SIZE = ED_SIZES.includes(n) ? n : 18;
+  document.documentElement.style.setProperty('--edfs', ED_SIZE + 'px');
+}
+function stepEdSize(d) {
+  const i = Math.max(0, Math.min(ED_SIZES.length - 1, ED_SIZES.indexOf(ED_SIZE) + d));
+  applyEdSize(ED_SIZES[i]); try { localStorage.setItem('lei-stuff-edsize', String(ED_SIZE)); } catch (e) { }
+}
+applyEdSize(ED_SIZE);
 const THEME_KEY = 'lei-stuff-theme';
 let THEME = 'dark';
 try { THEME = localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { }
@@ -894,8 +907,9 @@ function writePage(p) {
   const rub = (st === 'Editorial' || st === 'Terkirim') ? `<div class="card soft col" style="gap:8px;padding:14px 16px"><div class="between"><b style="font-weight:500;font-size:14px">Rubrik penilaian diri</b><span class="meta">klik kotak untuk menilai 1–5</span></div>${RUBRIC.map(r => `<div class="row" style="gap:12px;flex-wrap:nowrap"><span style="width:90px;font-size:14px;color:var(--ink2)">${r}</span><span class="pipgrid">${[1, 2, 3, 4, 5].map(n => `<button class="pip ${(p.rubric[r] || 0) >= n ? 'on' : ''}" data-act="rub" data-k="${r}" data-n="${n}" aria-label="${r} ${n}"></button>`).join('')}</span></div>`).join('')}</div>` : '';
   const center = `<section class="ecol" aria-label="Editor">
    <div class="tbar" role="toolbar" aria-label="Format teks">
-    <button class="tb" data-keep data-act="fmt" data-c="bold" aria-label="Tebal" style="font-weight:700">B</button><button class="tb" data-keep data-act="fmt" data-c="italic" aria-label="Miring" style="font-family:Lora,serif;font-style:italic">I</button>
+    <button class="tb" data-keep data-act="fmt" data-c="bold" aria-label="Tebal" style="font-weight:700">B</button><button class="tb" data-keep data-act="fmt" data-c="italic" aria-label="Miring" style="font-family:Lora,serif;font-style:italic">I</button><button class="tb" data-keep data-act="fmt" data-c="underline" aria-label="Garis bawah" title="Garis bawah (Ctrl+U)" style="text-decoration:underline;text-underline-offset:3px">U</button>
     <button class="tb" data-keep data-act="fmt" data-c="h2">Judul</button><button class="tb" data-keep data-act="fmt" data-c="blockquote">Kutipan</button><button class="tb" data-keep data-act="fmt" data-c="p">Paragraf</button><button class="tb" data-keep data-act="fmt" data-c="hr">Pemisah</button><button class="tb" data-keep data-act="addFn"><sup style="color:var(--act)">1</sup> Catatan kaki</button>
+    <span class="row" style="gap:2px;flex-wrap:nowrap" role="group" aria-label="Ukuran huruf naskah"><button class="tb" data-keep data-act="edSize" data-d="-1" aria-label="Perkecil huruf naskah" title="Perkecil huruf">A−</button><span class="meta" id="edSizeV" style="min-width:34px;text-align:center;font-variant-numeric:tabular-nums" aria-live="polite">${ED_SIZE}px</span><button class="tb" data-keep data-act="edSize" data-d="1" aria-label="Perbesar huruf naskah" title="Perbesar huruf" style="font-size:16px">A+</button></span>
     <span style="flex:1"></span>
     <span style="position:relative"><button class="btn sm ${P.running ? '' : 'ghost'}" id="pchip" data-act="pomoToggle" aria-expanded="${U.ed.pomoOpen}" style="font-variant-numeric:tabular-nums">${pomoChip()}</button>${U.ed.pomoOpen ? pomoPop() : ''}</span>
     <button class="btn sm ${!L && !R ? '' : 'ghost'}" data-act="wide" aria-pressed="${!L && !R}">${!L && !R ? 'Tampilkan panel' : 'Mode lebar'}</button>
@@ -1069,7 +1083,7 @@ function edHasFocus() { const ed = $('#ed'), s = getSelection(); return ed && s.
 function edFormat(c) {
   const ed = $('#ed'); if (!ed) return;
   if (!edHasFocus()) placeCaretEnd(ed);
-  if (c === 'bold' || c === 'italic') document.execCommand(c);
+  if (c === 'bold' || c === 'italic' || c === 'underline') document.execCommand(c);
   else if (c === 'hr') document.execCommand('insertHorizontalRule');
   else document.execCommand('formatBlock', false, c === 'p' ? 'P' : c.toUpperCase());
   onEditorInput();
@@ -1618,6 +1632,7 @@ window.addEventListener('hashchange', () => { let h = location.hash.slice(1); co
 const touch = p => { p.updatedAt = Date.now(); markDirty(); };
 const A = {
   go: t => go(t.dataset.v),
+  edSize: t => { stepEdSize(+t.dataset.d); const v = $('#edSizeV'); if (v) v.textContent = ED_SIZE + 'px'; },
   toggleTheme: () => { setTheme(THEME === 'light' ? 'dark' : 'light'); render(); toast(THEME === 'light' ? 'Tampilan terang' : 'Tampilan gelap'); },
   changeFolder: async () => {
     try { const r = await STORE.chooseFolder(true); if (r === false) return; META.fileId = null; saveLocal(); await loadFromDrive(); }
